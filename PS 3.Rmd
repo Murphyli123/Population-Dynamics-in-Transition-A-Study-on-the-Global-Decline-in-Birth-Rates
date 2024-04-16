@@ -1,0 +1,600 @@
+---
+title: "Problem set 3"
+author: "Murphy Li"
+date: "2023-04-16"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(gridExtra)
+library(lmtest)
+library(stargazer)
+library(sandwich)
+
+df<-read.csv('E:/Data analysis practice/R/CBR data/P_Data_Extract_From_World_Development_Indicators/Data.csv')
+```
+
+
+Plotting each with CBR
+```{r}
+#remove na, find year with most observations after omiting na
+df<-df%>%
+  na.omit()
+
+df%>%
+  count(Year)
+
+
+# 2015 has the least entries with na
+
+
+df%>%
+  filter(Year==2015)%>%
+  ggplot(aes(x=UHC_index, y=Crude_birth_rate))+
+  geom_point()+
+  xlab('Universal Heathcare Index')+ ylab('Crude Birth Rate')+ labs(title='UHC Index v CBR in 2015')+
+  theme_bw()+
+  geom_smooth(se=F)+
+  ggsave('UHC index v CBR.png', width=7, height=7/1.618)
+
+
+df%>%
+  filter(Year==2015)%>%
+  ggplot(aes(x=GNI_percap, y=Crude_birth_rate))+
+  geom_point()+
+  xlab('GNI Per Capita (USD)')+ ylab('Crude Birth Rate')+ labs(title='GNI Per cap v CBR in 2015')+
+  theme_bw()
+
+#using log on GNI per cap
+df<-df%>%
+  mutate('log_GNI_percap'=log(GNI_percap))
+
+df%>%
+  filter(Year==2015)%>%
+  ggplot(aes(x=log_GNI_percap, y=Crude_birth_rate))+
+  geom_point()+
+  xlab('Logged GNI Per Capita (USD)')+ ylab('Crude Birth Rate')+ labs(title='Logged GNI Per cap v CBR in 2015')+
+  theme_bw()+
+  geom_smooth(se=F)+
+  ggsave('income v cbr.png', width=7, height=7/1.618)
+
+df%>%
+  filter(Year==2015)%>%
+  ggplot(aes(x=Gov_edu_exp_pergdp, y=Crude_birth_rate))+
+  geom_point()+
+  xlab('Government Spending on Education (% GDP)')+ ylab('Crude Birth Rate')+   labs(title='Gov Education Spending v CBR in 2015')+
+  theme_bw()+
+  ggsave('education v cbr.png', width=7, height=7/1.618)
+
+df%>%
+  filter(Year==2015)%>%
+  ggplot(aes(x=Fe_lab_force_part_rate_a, y=Crude_birth_rate))+
+  geom_point()+
+  xlab('Female Labor Force Participation rate (%)')+ ylab('Crude Birth Rate')+ labs(title='Female Labor Force Participation rate  v CBR in 2015')+
+  theme_bw()+
+  ggsave('fe labor force pr v cbr.png', width=7, height=7/1.618)
+
+#summary of data 
+stargazer(df)
+
+
+#OLS model
+model<-lm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp+Fe_lab_force_part_rate_a, df[df$Year==2015,])
+summary(model)
+stargazer(model, title='OLS Regression Results', covariate.labels=c("Universal Heatlh Care Index","Logged GNI Per Capita","Government Spending on Education (% GDP)", "Female Labor Force Participation Rate"),dep.var.labels=c("Crude Birth Rate"))
+
+#ols less non significant varibale (Female laborforce)
+model2<-lm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp, df[df$Year==2015,])
+stargazer(model, model2, title='OLS Regression Results', covariate.labels=c("Universal Heatlh Care Index","Logged GNI Per Capita","Government Spending on Education (% GDP)"),dep.var.labels=c("Crude Birth Rate"))
+
+```
+It appears that UHC and GNI per cap has a negative relationship with CBR (as expected from theory), surprisingly, not much can be said about female labor force participation rate and government spending on education
+
+The model I chose is a linear regression model with OLS. The mathematical formula of this prediction function is
+
+$$ Crude Birth Rate= 59-0.47 X_1 - 1.57X_2 +0.67 X_3 + 0.04 X_4 $$
+Where 
+\begin{center}
+$X_1=$ UHC Index\\
+$X_2=$ logged GNI per Capita \\
+$X_3=$ Government expenditure on education as a \% of GDP\\
+$X_4=$ Female labor force participation rate\\
+\end{center}
+
+Breusch pagan test
+```{r}
+bptest(model)
+
+bptest(model2)
+
+```
+
+robust standard errors
+```{r}
+
+coeftest(model, vcov = vcovHC(model, type = 'HC0'))
+coeftest(model2, vcov = vcovHC(model2, type = 'HC0'))
+```
+
+
+Heteroskedasticity (see if variance is constant) graph 
+```{r}
+res <- data.frame(resid(model),fitted(model))
+
+res%>%
+  ggplot(aes(x=fitted.model., y=resid.model.))+
+  geom_point()+
+  theme_bw()+
+  xlab('Fitted Values')+ylab('Residuals')+
+  geom_hline(yintercept=0)+
+  ggsave('Residual plot ols.png',width=7, height=7/1.618)
+
+```
+
+Weight least squares 
+```{r}
+#wls with all var
+weight2 <- 1 / lm(abs(model$residuals) ~ model$fitted.values)$fitted.values^2
+model_rr2<-lm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp+Fe_lab_force_part_rate_a, df[df$Year==2015,], weights = weight2)
+
+summary(model_rr2)
+
+#wls without insignidicant var
+weight <- 1 / lm(abs(model2$residuals) ~ model2$fitted.values)$fitted.values^2
+model_rr<-lm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp, df[df$Year==2015,], weights=weight)
+
+summary(model_rr)
+
+stargazer(model_rr2, model_rr, title='WLS Regression Results', align=T, covariate.labels=c("Universal Heatlh Care Index","Logged GNI Per Capita","Government Spending on Education (% GDP)", "Female Labor Force Participation Rate"))
+```
+
+Heteroskedasticity in new model
+```{r}
+res <- data.frame(resid(model_rr),fitted(model_rr))
+
+res%>%
+  ggplot(aes(x=fitted.model_rr., y=resid.model_rr.))+
+  geom_point()+
+  theme_bw()+
+  xlab('Fitted Values')+ylab('Residuals')+
+  geom_hline(yintercept=0)+
+  ggsave('Residual plot wls.png',width=7, height=7/1.618)
+```
+
+
+
+
+Using predict on 2017 data, plotting with x=UHC index y= modeled crude birth rate
+```{r}
+newdat<-df%>%
+  filter(Year==2017)%>%
+  dplyr::select(UHC_index,log_GNI_percap,Gov_edu_exp_pergdp,Fe_lab_force_part_rate_a)
+
+res <- predict(model_rr, newdata = newdat,se.fit=T)
+data.frame(res) %>%
+  mutate(lower = fit - 1.96 * se.fit,
+         upper = fit + 1.96 * se.fit,
+         x=newdat$UHC_index) %>%
+  dplyr::select(-residual.scale,-se.fit) %>%
+  ggplot(aes(x=x, y=fit, ymin=lower, ymax=upper)) +
+  geom_ribbon(alpha=0.2) +
+  theme_bw() + 
+  geom_point()+
+  xlab('UHC Index')+ylab('Modeled Crude Birthrate')+labs(title='Modeled CBR with 2017 data')
+
+data.frame(res) %>%
+  mutate(lower = fit - 1.96 * se.fit,
+         upper = fit + 1.96 * se.fit,
+         x=newdat$log_GNI_percap) %>%
+  dplyr::select(-residual.scale,-se.fit) %>%
+  ggplot(aes(x=x, y=fit, ymin=lower, ymax=upper)) +
+  geom_ribbon(alpha=0.2) +
+  theme_bw() + 
+  geom_point()+
+  xlab('logged GNI per cap')+ylab('Modeled Crude Birthrate')+labs(title='Modeled CBR with 2017 data')
+
+data.frame(res) %>%
+  mutate(lower = fit - 1.96 * se.fit,
+         upper = fit + 1.96 * se.fit,
+         x=newdat$Gov_edu_exp_pergdp) %>%
+  dplyr::select(-residual.scale,-se.fit) %>%
+  ggplot(aes(x=x, y=fit, ymin=lower, ymax=upper)) +
+  geom_ribbon(alpha=0.2) +
+  theme_bw() + 
+  geom_point()+
+  xlab('Government spending on education (% GDP)')+ylab('Modeled Crude Birthrate')+labs(title='Modeled CBR with 2017 data')
+
+data.frame(res) %>%
+  mutate(lower = fit - 1.96 * se.fit,
+         upper = fit + 1.96 * se.fit,
+         x=newdat$Fe_lab_force_part_rate_a) %>%
+  dplyr::select(-residual.scale,-se.fit) %>%
+  ggplot(aes(x=x, y=fit, ymin=lower, ymax=upper)) +
+  geom_ribbon(alpha=0.2) +
+  theme_bw() + 
+  geom_point()+
+  xlab('Female labor force participation rate')+ylab('Modeled Crude Birthrate')+labs(title='Modeled CBR with 2017 data')
+```
+
+
+Using Predict, holding all covariates as mean except universal health care index ranging from the min and max of data set
+
+```{r}
+#UHC Index
+xhyp<-min(df$UHC_index):max(df$UHC_index)
+newdat<-data.frame(
+  UHC_index=xhyp,
+  log_GNI_percap=mean(df[df$Year==2015,]$log_GNI_percap),
+  Gov_edu_exp_pergdp=mean(df[df$Year==2015,]$Gov_edu_exp_pergdp)
+)
+
+res <- predict(model2, newdata = newdat, se.fit=T)
+
+data.frame(res) %>%
+  mutate(lower = fit - 1.96 * se.fit,
+         upper = fit + 1.96 * se.fit,
+         x=xhyp) %>%
+  dplyr::select(-residual.scale,-se.fit) %>%
+  ggplot(aes(x=x, y=fit, ymin=lower, ymax=upper)) +
+  geom_ribbon(alpha=0.2) +
+  theme_bw() + 
+  geom_line()+
+  xlab('Universal Health Care Index')+ylab('Modeled Crude Birthrate')+
+  labs(title = 'UHC Index')
+  ggsave('predict hold const UHC index.png', width=7, height=7/1.618)
+
+#logged GNI per Cap
+xhyp<-min(df$log_GNI_percap):max(df$log_GNI_percap)
+newdat<-data.frame(
+  UHC_index=mean(df[df$Year==2015,]$UHC_index),
+  log_GNI_percap=xhyp,
+  Gov_edu_exp_pergdp=mean(df[df$Year==2015,]$Gov_edu_exp_pergdp)
+)
+
+res <- predict(model2, newdata = newdat, se.fit=T)
+
+data.frame(res) %>%
+  mutate(lower = fit - 1.96 * se.fit,
+         upper = fit + 1.96 * se.fit,
+         x=xhyp) %>%
+  dplyr::select(-residual.scale,-se.fit) %>%
+  ggplot(aes(x=x, y=fit, ymin=lower, ymax=upper)) +
+  geom_ribbon(alpha=0.2) +
+  theme_bw() + 
+  geom_line()+
+  xlab('Logged GNI Per Capita')+ylab('Modeled Crude Birthrate')+
+  labs(title = 'Logged GNI Per Capita')+
+  ggsave('predict hold const logged GNI.png', width=7, height=7/1.618)
+
+#GNI per Cap
+xhyp1<-min(df$GNI_percap):max(df$GNI_percap)
+xhyp<-log(xhyp1)
+newdat<-data.frame(
+  UHC_index=mean(df[df$Year==2015,]$UHC_index),
+  log_GNI_percap=xhyp,
+  Gov_edu_exp_pergdp=mean(df[df$Year==2015,]$Gov_edu_exp_pergdp)
+)
+
+res <- predict(model2, newdata = newdat, se.fit=T)
+
+data.frame(res) %>%
+  mutate(lower = fit - 1.96 * se.fit,
+         upper = fit + 1.96 * se.fit,
+         x=xhyp1) %>%
+  dplyr::select(-residual.scale,-se.fit) %>%
+  ggplot(aes(x=x/1000, y=fit, ymin=lower, ymax=upper)) +
+  geom_ribbon(alpha=0.2) +
+  theme_bw() + 
+  geom_line()+
+  xlab('GNI Per Capita (USD in 1000s)')+ylab('Modeled Crude Birthrate')+
+  labs(title = 'GNI Per Capita')+
+  ggsave('predict hold const GNI.png', width=7, height=7/1.618)
+
+
+#gov spending on edu
+xhyp<-min(df$Gov_edu_exp_pergdp):max(df$Gov_edu_exp_pergdp)
+newdat<-data.frame(
+  UHC_index=mean(df[df$Year==2015,]$UHC_index),
+  log_GNI_percap=mean(df[df$Year==2015,]$log_GNI_percap),
+  Gov_edu_exp_pergdp=xhyp
+)
+
+res <- predict(model2, newdata = newdat, se.fit=T)
+
+data.frame(res) %>%
+  mutate(lower = fit - 1.96 * se.fit,
+         upper = fit + 1.96 * se.fit,
+         x=xhyp) %>%
+  dplyr::select(-residual.scale,-se.fit) %>%
+  ggplot(aes(x=x, y=fit, ymin=lower, ymax=upper)) +
+  geom_ribbon(alpha=0.2) +
+  theme_bw() + 
+  geom_line()+
+  xlab('Government Spending on Education (% GDP)')+ylab('Modeled Crude Birthrate')+
+  labs(title = 'Government Spending on Education (% GDP)')+
+  ggsave('predict hold const gov ed spending.png', width=7, height=7/1.618)
+
+
+
+```
+
+Bootstrapping UHC Index
+```{r}
+#first difference UHC index
+diff <- rep(NA, 10000)
+for(i in 1:10000){
+  bootdat <- sample_n(df[df$Year==2015,],size=nrow(df[df$Year==2015,]), replace=T)
+  reg.out <- lm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp, bootdat)
+  newdat = data.frame(
+    UHC_index = c(min(df$UHC_index[df$Year==2015]),max(df$UHC_index[df$Year==2015])),
+    log_GNI_percap = mean(bootdat$log_GNI_percap),
+    Gov_edu_exp_pergdp = mean(bootdat$Gov_edu_exp_pergdp)
+  )
+  yhat <- predict(reg.out,
+                  newdata = newdat)
+  diff[i] <- yhat[2]-yhat[1]
+}
+
+ggplot(as.data.frame(diff), aes(x=diff)) + geom_histogram(color='black', fill='white')+
+  xlab('Difference')+ylab('Frequency')+labs(title='UHC Index First difference with 2015 data')+
+  theme_bw()+
+  geom_vline(aes(xintercept=mean(diff)),
+            color="blue", size=0.75, linetype="dashed")+
+  ggsave('UHC first diff.png', width=7, height=7/1.618)
+
+
+bot.sum<-data.frame(
+  Average=mean(diff),
+  'Lower Quartile'=quantile(diff, 0.025),
+  'Upper Quartile'=quantile(diff, 0.975)
+)
+stargazer(bot.sum, summary=FALSE, rownames=FALSE)
+
+
+
+
+```
+
+Bootstrapping logged gni per cap
+```{r}
+#first difference logged gni per cap
+diff <- rep(NA, 10000)
+for(i in 1:10000){
+  bootdat <- sample_n(df[df$Year==2015,],size=nrow(df[df$Year==2015,]), replace=T)
+  reg.out <- lm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp, bootdat)
+  newdat = data.frame(
+    UHC_index = mean(bootdat$UHC_index),
+    log_GNI_percap = c(min(df$log_GNI_percap[df$Year==2015]),max(df$log_GNI_percap[df$Year==2015])),
+    Gov_edu_exp_pergdp = mean(bootdat$Gov_edu_exp_pergdp)
+  )
+  yhat <- predict(reg.out,
+                  newdata = newdat)
+  diff[i] <- yhat[2]-yhat[1]
+}
+
+ggplot(as.data.frame(diff), aes(x=diff)) + geom_histogram(color='black', fill='white')+
+  xlab('Difference')+ylab('Frequency')+labs(title='Logged GNI Per Capita First difference with 2015 data')+
+  theme_bw()+
+  geom_vline(aes(xintercept=mean(diff)),
+            color="blue", size=0.75, linetype="dashed")+
+  ggsave('GNI per cap first diff.png', width=7, height=7/1.618)
+
+
+bot.sum<-data.frame(
+  Average=mean(diff),
+  'Lower Quartile'=quantile(diff, 0.025),
+  'Upper Quartile'=quantile(diff, 0.975)
+)
+stargazer(bot.sum, summary=FALSE, rownames=FALSE)
+
+
+
+```
+
+Bootstrapping gov spending on education
+```{r}
+#first difference gov spending on education
+diff <- rep(NA, 10000)
+for(i in 1:10000){
+  bootdat <- sample_n(df[df$Year==2015,],size=nrow(df[df$Year==2015,]), replace=T)
+  reg.out <- lm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp, bootdat)
+  newdat = data.frame(
+    UHC_index = mean(bootdat$UHC_index),
+    log_GNI_percap = mean(bootdat$log_GNI_percap),
+    Gov_edu_exp_pergdp =c(min(df$Gov_edu_exp_pergdp[df$Year==2015]),max(df$Gov_edu_exp_pergdp[df$Year==2015]))
+  )
+  yhat <- predict(reg.out,
+                  newdata = newdat)
+  diff[i] <- yhat[2]-yhat[1]
+}
+
+ggplot(as.data.frame(diff), aes(x=diff)) + geom_histogram(color='black', fill='white')+
+  xlab('Difference')+ylab('Frequency')+labs(title='Government Spending on Education First difference with 2015 data')+
+  theme_bw()+
+  geom_vline(aes(xintercept=mean(diff)),
+            color="blue", size=0.75, linetype="dashed")+
+  ggsave('Gov edu spending first diff.png', width=7, height=7/1.618)
+
+
+bot.sum<-data.frame(
+  Average=mean(diff),
+  'Lower Quartile'=quantile(diff, 0.025),
+  'Upper Quartile'=quantile(diff, 0.975)
+)
+stargazer(bot.sum, summary=FALSE, rownames=FALSE)
+
+
+
+```
+Bootstrapping female lab part rate
+
+```{r}
+#first difference female lab part rate
+diff <- rep(NA, 10000)
+for(i in 1:10000){
+  bootdat <- sample_n(df[df$Year==2015,],size=nrow(df[df$Year==2015,]), replace=T)
+  reg.out <- rlm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp+Fe_lab_force_part_rate_a, bootdat)
+  newdat = data.frame(
+    UHC_index = mean(bootdat$UHC_index),
+    log_GNI_percap = mean(bootdat$log_GNI_percap),
+    Gov_edu_exp_pergdp =mean(bootdat$Gov_edu_exp_pergdp),
+    Fe_lab_force_part_rate_a=c(min(df$Fe_lab_force_part_rate_a[df$Year==2015]),max(df$Fe_lab_force_part_rate_a[df$Year==2015]))
+  )
+  yhat <- predict(reg.out,
+                  newdata = newdat)
+  diff[i] <- yhat[2]-yhat[1]
+}
+
+ggplot(as.data.frame(diff), aes(x=diff)) + geom_histogram(color='black', fill='white')+
+  xlab('Difference')+ylab('Frequency')+labs(title='Feamle Labor Force Pariticipation rate First difference with 2015 data')+
+  theme_bw()+
+  geom_vline(aes(xintercept=mean(diff)),
+            color="blue", size=0.75)+
+  ggsave('female labor part rate first diff.png', width=7, height=7/1.618)
+
+
+data.frame(
+  Average=mean(diff),
+  lower_quartile=quantile(diff, 0.025),
+  upper_quartile=quantile(diff, 0.975)
+)
+
+
+
+```
+
+
+using same year as model data 2015
+```{r}
+diff <- rep(NA, 10000)
+for(i in 1:10000){
+  bootdat <- sample_n(df[df$Year==2015,],size=nrow(df[df$Year==2015,]), replace=T)
+  reg.out <- lm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp+Fe_lab_force_part_rate_a, bootdat)
+  newdat = data.frame(
+    UHC_index = mean(bootdat$UHC_index),
+    log_GNI_percap = mean(bootdat$log_GNI_percap),
+    Gov_edu_exp_pergdp = mean(bootdat$Gov_edu_exp_pergdp),
+    Fe_lab_force_part_rate_a = mean(bootdat$Fe_lab_force_part_rate_a)
+  )
+  yhat[1] <- predict(reg.out,
+                  newdata = newdat)
+  yhat[2] <- predict(model,
+                  newdata = newdat)
+  diff[i] <- yhat[2]-yhat[1]
+}
+
+ggplot(as.data.frame(diff), aes(x=diff)) + geom_histogram(color='black', fill='white')+
+  xlab('Difference in prediction')+ylab('Frequency')+labs(title='Difference in predicted values for 2015')
+
+data.frame(
+  y=mean(diff),
+  l=quantile(diff, 0.025),
+  u=quantile(diff, 0.975)
+)
+
+```
+
+Using 2017 (which is not what the model was based on)
+```{r}
+diff <- rep(NA, 10000)
+for(i in 1:10000){
+  bootdat <- sample_n(df[df$Year==2017,],size=nrow(df[df$Year==2017,]), replace=T)
+  reg.out <- lm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp+Fe_lab_force_part_rate_a, bootdat)
+  newdat = data.frame(
+    UHC_index = mean(bootdat$UHC_index),
+    log_GNI_percap = mean(bootdat$log_GNI_percap),
+    Gov_edu_exp_pergdp = mean(bootdat$Gov_edu_exp_pergdp),
+    Fe_lab_force_part_rate_a = mean(bootdat$Fe_lab_force_part_rate_a)
+  )
+  yhat[1] <- predict(reg.out,
+                  newdata = newdat)
+  yhat[2] <- predict(model,
+                  newdata = newdat)
+  diff[i] <- yhat[2]-yhat[1]
+}
+
+ggplot(as.data.frame(diff), aes(x=diff)) + geom_histogram(color='black', fill='white')+
+  xlab('Difference in prediction')+ylab('Frequency')+labs(title='Difference in predicted values for 2017')
+data.frame(
+  y=mean(diff),
+  l=quantile(diff, 0.025),
+  u=quantile(diff, 0.975)
+)
+```
+Using data from all years (which is not what the model was based on)
+```{r}
+diff <- rep(NA, 10000)
+for(i in 1:10000){
+  bootdat <- sample_n(df,size=nrow(df), replace=T)
+  reg.out <- lm(Crude_birth_rate~UHC_index+log_GNI_percap+Gov_edu_exp_pergdp+Fe_lab_force_part_rate_a, bootdat)
+  newdat = data.frame(
+    UHC_index = mean(bootdat$UHC_index),
+    log_GNI_percap = mean(bootdat$log_GNI_percap),
+    Gov_edu_exp_pergdp = mean(bootdat$Gov_edu_exp_pergdp),
+    Fe_lab_force_part_rate_a = mean(bootdat$Fe_lab_force_part_rate_a)
+  )
+  yhat[1] <- predict(reg.out,
+                  newdata = newdat)
+  yhat[2] <- predict(model,
+                  newdata = newdat)
+  diff[i] <- yhat[2]-yhat[1]
+}
+
+ggplot(as.data.frame(diff), aes(x=diff)) + geom_histogram(color='black', fill='white')+
+  xlab('Difference in prediction')+ylab('Frequency')+labs(title='Difference in predicted values from years 2013, 2015, 2017')
+
+data.frame(
+  y=mean(diff),
+  l=quantile(diff, 0.025),
+  u=quantile(diff, 0.975)
+)
+```
+From bootstrapping, the model appears to be consistent and accurate
+
+
+Using predict to predict CBR using data from all years, and look at difference (predicted-actual)
+```{r}
+#2015
+df2015<-df%>%
+  filter(Year==2015)
+predicted2015<-predict(model, df2015)
+
+error2015<-df2015$Crude_birth_rate-predicted2015
+ggplot(as.data.frame(error2015), aes(x=error2015)) + geom_histogram(color='black', fill='white')+
+xlab('Error term')+ylab('Frequency')+labs(title='Distribution of error terms in 2015')
+
+data.frame(Mean=mean(error), Standard_deviation=sd(error), Variance=var(error))
+
+#2017
+df2017<-df%>%
+  filter(Year==2017)
+predicted2017<-predict(model, df2017)
+
+error<-df2017$Crude_birth_rate-predicted2017
+ggplot(as.data.frame(error), aes(x=error)) + geom_histogram(color='black', fill='white')+
+xlab('Error term')+ylab('Frequency')+labs(title='Distribution of error terms in 2017')
+
+data.frame(Mean=mean(error), Standard_deviation=sd(error), Variance=var(error))
+
+#2019
+df2019<-df%>%
+  filter(Year==2019)
+predicted2019<-predict(model, df2019)
+
+error<-df2019$Crude_birth_rate-predicted2019
+ggplot(as.data.frame(error), aes(x=error)) + geom_histogram(color='black', fill='white')+
+xlab('Error term')+ylab('Frequency')+labs(title='Distribution of error terms in 2019')
+
+data.frame(Mean=mean(error), Standard_deviation=sd(error), Variance=var(error))
+```
+The distribution of error terms look similar for all years, could indicate consistency in the model
+
+
+
+
+
+
+
+
+
